@@ -1,0 +1,85 @@
+{
+  "name": "Daily Standup Bot (GitHub + Jira → Slack Summary)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1-5" }] }
+      },
+      "name": "Weekday 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/search/issues?q=is:pr+is:merged+org:{{ $env.GITHUB_ORG }}+merged:>={{ $today.minus({days: 1}).toISODate() }}&sort=updated",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth"
+      },
+      "name": "Get Merged PRs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 200],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_ID", "name": "GitHub Token" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://{{ $env.JIRA_HOST }}/rest/api/3/search?jql=status changed to Done after -1d&maxResults=20",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth"
+      },
+      "name": "Get Completed Jira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 400],
+      "credentials": {
+        "httpBasicAuth": { "id": "JIRA_BASIC_ID", "name": "Jira Basic Auth" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prs = $('Get Merged PRs').first().json;\nconst jira = $('Get Completed Jira').first().json;\n\nconst prList = (prs.items || []).slice(0, 10).map(pr => \n  `• <${pr.html_url}|${pr.title}> by ${pr.user.login}`\n).join('\\n') || '_No PRs merged_';\n\nconst jiraList = (jira.issues || []).slice(0, 10).map(i =>\n  `• [${i.key}] ${i.fields.summary}`\n).join('\\n') || '_No tickets completed_';\n\nreturn [{ json: { prList, jiraList, prCount: prs.total_count || 0, jiraCount: jira.total || 0 } }];"
+      },
+      "name": "Build Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#engineering",
+        "text": "=☀️ *Daily Engineering Digest*\n\n*Merged PRs ({{ $json.prCount }}):*\n{{ $json.prList }}\n\n*Completed Tickets ({{ $json.jiraCount }}):*\n{{ $json.jiraList }}\n\n---\n_Automated by Quvantic n8n Pipeline_"
+      },
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 300],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    }
+  ],
+  "connections": {
+    "Weekday 9 AM": {
+      "main": [
+        [
+          { "node": "Get Merged PRs", "type": "main", "index": 0 },
+          { "node": "Get Completed Jira", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Get Merged PRs": {
+      "main": [[{ "node": "Build Summary", "type": "main", "index": 0 }]]
+    },
+    "Get Completed Jira": {
+      "main": [[{ "node": "Build Summary", "type": "main", "index": 0 }]]
+    },
+    "Build Summary": {
+      "main": [[{ "node": "Post to Slack", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["communication", "standup", "slack", "github", "jira"]
+}
