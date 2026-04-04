@@ -1,0 +1,80 @@
+{
+  "name": "CI Failure → Jira Ticket + Slack Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ci-webhook",
+        "responseMode": "onReceived"
+      },
+      "name": "CI Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.conclusion }}",
+              "rightValue": "failure",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Is Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "project": "QA",
+        "issueType": "Bug",
+        "summary": "=CI Failure: {{ $json.workflow }} on {{ $json.repository }}",
+        "description": "=*CI Pipeline Failed*\n\n- *Workflow:* {{ $json.workflow }}\n- *Branch:* {{ $json.branch }}\n- *Commit:* {{ $json.commit_sha }}\n- *Author:* {{ $json.actor }}\n- *Run URL:* {{ $json.run_url }}\n\nPlease investigate and fix.",
+        "priority": "High",
+        "labels": ["ci-failure", "automated"]
+      },
+      "name": "Create Jira Ticket",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [690, 200],
+      "credentials": {
+        "jiraSoftwareCloudApi": { "id": "JIRA_CREDENTIAL_ID", "name": "Jira Cloud" }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#ci-alerts",
+        "text": "=🔴 *CI Failed:* {{ $json.workflow }}\n*Repo:* {{ $json.repository }}\n*Branch:* `{{ $json.branch }}`\n*Author:* {{ $json.actor }}\n<{{ $json.run_url }}|View Run> | Jira ticket created: {{ $node['Create Jira Ticket'].json.key }}"
+      },
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 200],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    }
+  ],
+  "connections": {
+    "CI Webhook": {
+      "main": [[{ "node": "Is Failure?", "type": "main", "index": 0 }]]
+    },
+    "Is Failure?": {
+      "main": [
+        [{ "node": "Create Jira Ticket", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Create Jira Ticket": {
+      "main": [[{ "node": "Slack Alert", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["ci-cd", "jira", "slack", "incident-response"]
+}
