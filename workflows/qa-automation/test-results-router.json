@@ -1,0 +1,105 @@
+{
+  "name": "Test Results Router (CI → Parse → Slack/Jira)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "test-results",
+        "responseMode": "onReceived"
+      },
+      "name": "Results Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst totalTests = results.total || 0;\nconst passed = results.passed || 0;\nconst failed = results.failed || 0;\nconst passRate = totalTests > 0 ? ((passed / totalTests) * 100).toFixed(1) : '0';\nconst hasCriticalFailures = failed > 0 && results.failures?.some(f => f.severity === 'critical');\n\nreturn [{\n  json: {\n    ...results,\n    passRate: parseFloat(passRate),\n    hasCriticalFailures,\n    summary: `${passed}/${totalTests} passed (${passRate}%)`,\n    status: failed === 0 ? 'green' : hasCriticalFailures ? 'red' : 'yellow'\n  }\n}];"
+      },
+      "name": "Parse Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "red",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Critical Failures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#qa-alerts",
+        "text": "=🔴 *Test Run Failed*\n*Suite:* {{ $json.suite }}\n*Results:* {{ $json.summary }}\n*Failed:* {{ $json.failed }} tests\n*Branch:* `{{ $json.branch }}`\n\nCritical failures detected — Jira ticket created."
+      },
+      "name": "Slack Critical Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 200],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    },
+    {
+      "parameters": {
+        "project": "QA",
+        "issueType": "Bug",
+        "summary": "=Test failures: {{ $json.suite }} ({{ $json.failed }} failed)",
+        "description": "=*Automated Test Failure Report*\n\n- *Suite:* {{ $json.suite }}\n- *Results:* {{ $json.summary }}\n- *Branch:* {{ $json.branch }}\n- *Commit:* {{ $json.commit }}\n\n*Failed Tests:*\n{{ $json.failures?.map(f => '- ' + f.name).join('\\n') || 'See CI logs' }}",
+        "priority": "High",
+        "labels": ["test-failure", "automated"]
+      },
+      "name": "Create Jira Bug",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [910, 350],
+      "credentials": {
+        "jiraSoftwareCloudApi": { "id": "JIRA_CREDENTIAL_ID", "name": "Jira Cloud" }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "#qa-results",
+        "text": "=🟢 *Test Run Passed*\n*Suite:* {{ $json.suite }}\n*Results:* {{ $json.summary }}\n*Branch:* `{{ $json.branch }}`"
+      },
+      "name": "Slack Success",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 500],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    }
+  ],
+  "connections": {
+    "Results Webhook": {
+      "main": [[{ "node": "Parse Results", "type": "main", "index": 0 }]]
+    },
+    "Parse Results": {
+      "main": [[{ "node": "Critical Failures?", "type": "main", "index": 0 }]]
+    },
+    "Critical Failures?": {
+      "main": [
+        [
+          { "node": "Slack Critical Alert", "type": "main", "index": 0 },
+          { "node": "Create Jira Bug", "type": "main", "index": 0 }
+        ],
+        [{ "node": "Slack Success", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["qa-automation", "test-results", "jira", "slack"]
+}

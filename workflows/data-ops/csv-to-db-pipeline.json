@@ -1,0 +1,79 @@
+{
+  "name": "CSV Upload → Validate → PostgreSQL Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-csv",
+        "responseMode": "lastNode",
+        "options": { "rawBody": true }
+      },
+      "name": "Upload Endpoint",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "fromFile",
+        "fileFormat": "csv",
+        "options": { "headerRow": true }
+      },
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst valid = [];\nconst invalid = [];\n\nfor (const row of rows) {\n  const d = row.json;\n  const errors = [];\n  \n  if (!d.email || !d.email.includes('@')) errors.push('Invalid email');\n  if (!d.name || d.name.trim().length < 2) errors.push('Name too short');\n  \n  if (errors.length > 0) {\n    invalid.push({ json: { ...d, errors } });\n  } else {\n    valid.push({ json: d });\n  }\n}\n\nreturn [valid, invalid];"
+      },
+      "name": "Validate Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "contacts",
+        "columns": "name,email,company,phone"
+      },
+      "name": "Insert to PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [910, 200],
+      "credentials": {
+        "postgres": { "id": "PG_CREDENTIAL_ID", "name": "PostgreSQL" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const valid = $('Insert to PostgreSQL').all().length;\nconst invalid = $input.all().length;\nreturn [{ json: { message: `Imported ${valid} rows. ${invalid} rows had validation errors.`, valid, invalid } }];"
+      },
+      "name": "Summary Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 300]
+    }
+  ],
+  "connections": {
+    "Upload Endpoint": {
+      "main": [[{ "node": "Parse CSV", "type": "main", "index": 0 }]]
+    },
+    "Parse CSV": {
+      "main": [[{ "node": "Validate Rows", "type": "main", "index": 0 }]]
+    },
+    "Validate Rows": {
+      "main": [
+        [{ "node": "Insert to PostgreSQL", "type": "main", "index": 0 }],
+        [{ "node": "Summary Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Insert to PostgreSQL": {
+      "main": [[{ "node": "Summary Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["data-ops", "csv", "postgresql", "etl"]
+}
