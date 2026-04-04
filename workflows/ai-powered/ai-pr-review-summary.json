@@ -1,0 +1,131 @@
+{
+  "name": "AI PR Review Summary (Claude)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pr-review",
+        "responseMode": "onReceived"
+      },
+      "name": "GitHub PR Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "opened",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Is New PR?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.repository.full_name }}/pulls/{{ $json.number }}/files",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.v3.diff" }
+          ]
+        }
+      },
+      "name": "Get PR Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_ID", "name": "GitHub Token" }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "1024"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"user\", \"content\": \"Review this PR diff and provide a concise summary (3-5 bullet points) covering: what changed, potential risks, and suggestions. Be direct.\\n\\nDiff:\\n{{ $json.data.substring(0, 8000) }}\"}]"
+            }
+          ]
+        }
+      },
+      "name": "Claude Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $('GitHub PR Webhook').item.json.repository.full_name }}/issues/{{ $('GitHub PR Webhook').item.json.number }}/comments",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/vnd.github.v3+json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "body",
+              "value": "=## 🤖 AI Review Summary\\n\\n{{ $json.content[0].text }}\\n\\n---\\n*Automated review by [Quvantic AI Pipeline](https://quvantic.com)*"
+            }
+          ]
+        }
+      },
+      "name": "Post Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1130, 300],
+      "credentials": {
+        "httpHeaderAuth": { "id": "GITHUB_TOKEN_ID", "name": "GitHub Token" }
+      }
+    }
+  ],
+  "connections": {
+    "GitHub PR Webhook": {
+      "main": [[{ "node": "Is New PR?", "type": "main", "index": 0 }]]
+    },
+    "Is New PR?": {
+      "main": [[{ "node": "Get PR Diff", "type": "main", "index": 0 }], []]
+    },
+    "Get PR Diff": {
+      "main": [[{ "node": "Claude Review", "type": "main", "index": 0 }]]
+    },
+    "Claude Review": {
+      "main": [[{ "node": "Post Comment", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["ai-powered", "code-review", "claude", "github"]
+}

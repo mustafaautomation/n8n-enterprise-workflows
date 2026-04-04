@@ -1,0 +1,67 @@
+{
+  "name": "AI Incident Responder (PagerDuty → Claude → Slack)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "incident-webhook",
+        "responseMode": "onReceived"
+      },
+      "name": "PagerDuty Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "claude-sonnet-4-20250514" },
+            { "name": "max_tokens", "value": "1024" },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"user\", \"content\": \"An incident was triggered. Analyze and provide: 1) Likely root cause, 2) Immediate mitigation steps, 3) Who to escalate to. Be concise.\\n\\nIncident: {{ $json.event.data.title }}\\nService: {{ $json.event.data.service.name }}\\nSeverity: {{ $json.event.data.urgency }}\\nDescription: {{ $json.event.data.description }}\"}]"
+            }
+          ]
+        }
+      },
+      "name": "Claude Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#incidents",
+        "text": "=🚨 *Incident:* {{ $('PagerDuty Webhook').item.json.event.data.title }}\n*Service:* {{ $('PagerDuty Webhook').item.json.event.data.service.name }}\n*Severity:* {{ $('PagerDuty Webhook').item.json.event.data.urgency }}\n\n🤖 *AI Analysis:*\n{{ $json.content[0].text }}\n\n---\n_Automated triage by Quvantic AI Pipeline_"
+      },
+      "name": "Slack Incident Channel",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [690, 300],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    }
+  ],
+  "connections": {
+    "PagerDuty Webhook": {
+      "main": [[{ "node": "Claude Analysis", "type": "main", "index": 0 }]]
+    },
+    "Claude Analysis": {
+      "main": [[{ "node": "Slack Incident Channel", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["ai-powered", "incident-response", "pagerduty", "claude", "slack"]
+}
