@@ -1,0 +1,118 @@
+{
+  "name": "AI Test Failure Analyzer (Webhook → Claude → Slack/Jira)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "test-failure-webhook",
+        "responseMode": "onReceived"
+      },
+      "name": "Test Failure Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\nreturn [{\n  json: {\n    testName: body.test_name || body.testName || 'Unknown Test',\n    suiteName: body.suite_name || body.suiteName || 'Unknown Suite',\n    errorMessage: body.error_message || body.errorMessage || body.message || '',\n    stackTrace: body.stack_trace || body.stackTrace || '',\n    duration: body.duration || 0,\n    retryCount: body.retry_count || body.retryCount || 0,\n    branch: body.branch || 'unknown',\n    commitSha: body.commit_sha || body.commitSha || '',\n    runUrl: body.run_url || body.runUrl || '',\n    repository: body.repository || 'unknown',\n    timestamp: body.timestamp || new Date().toISOString()\n  }\n}];"
+      },
+      "name": "Parse Failures",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are a senior QA engineer analyzing test failures. Classify this failure into exactly ONE category: FLAKY (intermittent/timing/race condition), BUG (real application defect), or INFRA (environment/network/CI infrastructure issue).\\n\\nRespond in this exact JSON format:\\n{\\\"category\\\": \\\"FLAKY|BUG|INFRA\\\", \\\"confidence\\\": 0.0-1.0, \\\"root_cause\\\": \\\"one-line root cause\\\", \\\"analysis\\\": \\\"2-3 sentence detailed analysis\\\", \\\"recommended_action\\\": \\\"what to do next\\\"}\\n\\nTest: {{ $json.testName }}\\nSuite: {{ $json.suiteName }}\\nError: {{ $json.errorMessage }}\\nStack Trace: {{ $json.stackTrace }}\\nDuration: {{ $json.duration }}ms\\nRetry Count: {{ $json.retryCount }}\\nBranch: {{ $json.branch }}\"\n  }]\n}"
+      },
+      "name": "AI Failure Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ JSON.parse($json.content[0].text).category }}",
+              "rightValue": "BUG",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Is Real Bug?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [910, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#test-failures",
+        "text": "=🧪 *Test Failure Analysis*\n\n*Test:* {{ $('Parse Failures').item.json.testName }}\n*Suite:* {{ $('Parse Failures').item.json.suiteName }}\n*Branch:* `{{ $('Parse Failures').item.json.branch }}`\n*Repository:* {{ $('Parse Failures').item.json.repository }}\n\n🤖 *AI Classification:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).category }}\n*Confidence:* {{ (JSON.parse($('AI Failure Analysis').item.json.content[0].text).confidence * 100).toFixed(0) }}%\n*Root Cause:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).root_cause }}\n*Analysis:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).analysis }}\n*Action:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).recommended_action }}\n\n{{ $('Parse Failures').item.json.runUrl ? '<' + $('Parse Failures').item.json.runUrl + '|View CI Run>' : '' }}\n\n---\n_Automated analysis by Quvantic AI Pipeline_"
+      },
+      "name": "Slack Report",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1130, 200],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    },
+    {
+      "parameters": {
+        "project": "QA",
+        "issueType": "Bug",
+        "summary": "=[AI-Detected Bug] {{ $('Parse Failures').item.json.testName }} — {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).root_cause }}",
+        "description": "=*AI-Detected Bug from Test Failure*\n\n*Test:* {{ $('Parse Failures').item.json.testName }}\n*Suite:* {{ $('Parse Failures').item.json.suiteName }}\n*Branch:* {{ $('Parse Failures').item.json.branch }}\n*Commit:* {{ $('Parse Failures').item.json.commitSha }}\n\n*Error:*\n{code}{{ $('Parse Failures').item.json.errorMessage }}{code}\n\n*Stack Trace:*\n{code}{{ $('Parse Failures').item.json.stackTrace }}{code}\n\n*AI Analysis:*\n- *Category:* BUG (Confidence: {{ (JSON.parse($('AI Failure Analysis').item.json.content[0].text).confidence * 100).toFixed(0) }}%)\n- *Root Cause:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).root_cause }}\n- *Analysis:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).analysis }}\n- *Recommended Action:* {{ JSON.parse($('AI Failure Analysis').item.json.content[0].text).recommended_action }}\n\n{{ $('Parse Failures').item.json.runUrl ? '[View CI Run|' + $('Parse Failures').item.json.runUrl + ']' : '' }}\n\n_Auto-created by Quvantic AI Pipeline_",
+        "priority": "High",
+        "labels": ["ai-detected", "test-failure", "automated"]
+      },
+      "name": "Create Jira Bug",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [1130, 400],
+      "credentials": {
+        "jiraSoftwareCloudApi": { "id": "JIRA_CREDENTIAL_ID", "name": "Jira Cloud" }
+      }
+    }
+  ],
+  "connections": {
+    "Test Failure Webhook": {
+      "main": [[{ "node": "Parse Failures", "type": "main", "index": 0 }]]
+    },
+    "Parse Failures": {
+      "main": [[{ "node": "AI Failure Analysis", "type": "main", "index": 0 }]]
+    },
+    "AI Failure Analysis": {
+      "main": [[{ "node": "Is Real Bug?", "type": "main", "index": 0 }]]
+    },
+    "Is Real Bug?": {
+      "main": [
+        [
+          { "node": "Slack Report", "type": "main", "index": 0 },
+          { "node": "Create Jira Bug", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Slack Report", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["ai-powered", "test-analysis", "claude", "slack", "jira", "qa-automation"]
+}

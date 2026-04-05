@@ -1,0 +1,74 @@
+{
+  "name": "Uptime Health Check (Cron → Multi-URL Check → Slack Alert)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 5 }
+          ]
+        }
+      },
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const endpoints = [\n  { name: 'Production API', url: process.env.HEALTH_CHECK_API_URL || 'https://api.example.com/health' },\n  { name: 'Production Web', url: process.env.HEALTH_CHECK_WEB_URL || 'https://app.example.com' },\n  { name: 'Staging API', url: process.env.HEALTH_CHECK_STAGING_URL || 'https://staging-api.example.com/health' },\n  { name: 'Auth Service', url: process.env.HEALTH_CHECK_AUTH_URL || 'https://auth.example.com/health' }\n];\n\nconst results = [];\nconst downEndpoints = [];\n\nfor (const endpoint of endpoints) {\n  const start = Date.now();\n  try {\n    const response = await fetch(endpoint.url, {\n      method: 'GET',\n      signal: AbortSignal.timeout(10000)\n    });\n    const responseTime = Date.now() - start;\n    const isUp = response.status >= 200 && response.status < 400;\n    results.push({\n      name: endpoint.name,\n      url: endpoint.url,\n      status: isUp ? 'UP' : 'DOWN',\n      statusCode: response.status,\n      responseTime: responseTime\n    });\n    if (!isUp) {\n      downEndpoints.push({ name: endpoint.name, url: endpoint.url, statusCode: response.status, responseTime: responseTime });\n    }\n  } catch (error) {\n    const responseTime = Date.now() - start;\n    results.push({\n      name: endpoint.name,\n      url: endpoint.url,\n      status: 'DOWN',\n      statusCode: 0,\n      responseTime: responseTime,\n      error: error.message\n    });\n    downEndpoints.push({ name: endpoint.name, url: endpoint.url, statusCode: 0, error: error.message, responseTime: responseTime });\n  }\n}\n\nreturn [{\n  json: {\n    timestamp: new Date().toISOString(),\n    totalEndpoints: endpoints.length,\n    upCount: results.filter(r => r.status === 'UP').length,\n    downCount: downEndpoints.length,\n    hasDownEndpoints: downEndpoints.length > 0,\n    results: results,\n    downEndpoints: downEndpoints\n  }\n}];"
+      },
+      "name": "Check Endpoints",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasDownEndpoints }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Any Down?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "channel": "#ops-alerts",
+        "text": "=🔴 *ENDPOINT DOWN ALERT*\n\n*{{ $json.downCount }} of {{ $json.totalEndpoints }} endpoints are DOWN*\n*Checked at:* {{ $json.timestamp }}\n\n{{ $json.downEndpoints.map(e => '❌ *' + e.name + '* — `' + e.url + '`\\n   Status: ' + (e.statusCode || 'Unreachable') + (e.error ? ' (' + e.error + ')' : '') + ' | Response: ' + e.responseTime + 'ms').join('\\n\\n') }}\n\n---\n*Healthy Endpoints:*\n{{ $json.results.filter(r => r.status === 'UP').map(e => '✅ ' + e.name + ' — ' + e.responseTime + 'ms').join('\\n') }}\n\n---\n_Automated monitoring by Quvantic Ops Pipeline_"
+      },
+      "name": "Slack Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [910, 200],
+      "credentials": {
+        "slackApi": { "id": "SLACK_CREDENTIAL_ID", "name": "Slack API" }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{ "node": "Check Endpoints", "type": "main", "index": 0 }]]
+    },
+    "Check Endpoints": {
+      "main": [[{ "node": "Any Down?", "type": "main", "index": 0 }]]
+    },
+    "Any Down?": {
+      "main": [
+        [{ "node": "Slack Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": ["monitoring", "uptime", "health-check", "slack", "ops"]
+}
