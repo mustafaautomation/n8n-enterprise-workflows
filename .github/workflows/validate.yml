@@ -16,14 +16,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate JSON syntax
-        run: |
-          echo "Validating workflow JSON files..."
-          find workflows -name "*.json" -exec sh -c '
-            if ! python3 -m json.tool "$1" > /dev/null 2>&1; then
-              echo "INVALID: $1"
-              exit 1
-            fi
-            echo "OK: $1"
-          ' _ {} \;
-          echo "All workflow files are valid JSON."
+      - name: Validate workflow structure
+        run: bash scripts/validate.sh

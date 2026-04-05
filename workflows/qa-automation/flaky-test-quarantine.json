@@ -1,0 +1,71 @@
+{
+  "name": "Flaky Test Quarantine",
+  "nodes": [
+    {
+      "name": "CI Results Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "parameters": {
+        "path": "test-results",
+        "httpMethod": "POST"
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Detect Flaky Tests",
+      "type": "n8n-nodes-base.code",
+      "position": [450, 300],
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst tests = results.tests || [];\nconst flaky = tests.filter(t => t.retries > 0 && t.status === 'passed');\nconst failing = tests.filter(t => t.status === 'failed');\nreturn [{ json: { flaky, failing, total: tests.length, flakyCount: flaky.length, failCount: failing.length } }];"
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Has Flaky Tests?",
+      "type": "n8n-nodes-base.if",
+      "position": [650, 300],
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{$json.flakyCount}}", "operation": "larger", "value2": 0 }]
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Create Quarantine Ticket",
+      "type": "n8n-nodes-base.jira",
+      "position": [850, 200],
+      "parameters": {
+        "project": "QA",
+        "issueType": "Task",
+        "summary": "Quarantine flaky tests: {{$json.flakyCount}} tests",
+        "description": "The following tests passed only after retries and should be quarantined for investigation."
+      },
+      "typeVersion": 1
+    },
+    {
+      "name": "Slack Flaky Alert",
+      "type": "n8n-nodes-base.slack",
+      "position": [850, 400],
+      "parameters": {
+        "channel": "#qa-alerts",
+        "text": "⚠️ *Flaky Test Alert*\n{{$json.flakyCount}} tests required retries to pass.\nTotal: {{$json.total}} | Failed: {{$json.failCount}}"
+      },
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "CI Results Webhook": {
+      "main": [[{ "node": "Detect Flaky Tests", "type": "main", "index": 0 }]]
+    },
+    "Detect Flaky Tests": {
+      "main": [[{ "node": "Has Flaky Tests?", "type": "main", "index": 0 }]]
+    },
+    "Has Flaky Tests?": {
+      "main": [
+        [{ "node": "Create Quarantine Ticket", "type": "main", "index": 0 }],
+        [{ "node": "Slack Flaky Alert", "type": "main", "index": 0 }]
+      ]
+    }
+  }
+}
