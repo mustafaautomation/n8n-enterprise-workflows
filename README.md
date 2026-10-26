@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![n8n](https://img.shields.io/badge/n8n-Workflows-FF6D5A.svg?logo=n8n&logoColor=white)](https://n8n.io)
 
-Production-ready n8n workflow templates for enterprise automation. CI/CD notifications, AI-powered code review, QA test routing, daily standup bots, and data pipelines — all importable into any n8n instance.
+n8n workflow templates for engineering teams: CI/CD notifications, AI-assisted code review, QA test routing, a daily standup bot and a CSV-to-PostgreSQL pipeline. Each is a JSON file you can import into an n8n instance and connect to your own credentials.
 
 ---
 
